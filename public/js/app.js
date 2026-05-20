@@ -130,7 +130,7 @@ async function enviarReporte() {
 
     if (!res.ok) throw new Error();
 
-    showToast('✅ Reporte enviado correctamente. ¡Gracias!');
+    showToast('Reporte enviado correctamente. Gracias.');
     limpiarFormulario();
     cargarReportesEnMapa();
     cargarStats();
@@ -184,10 +184,10 @@ async function cargarReportesEnMapa() {
       const iw = new google.maps.InfoWindow({
         content: `
           <div class="info-window">
-            <strong>💧 ${escHtml(r.identificacion)}</strong>
-            ${r.zona ? `<div class="info-row">📍 ${escHtml(r.zona)}</div>` : ''}
-            ${r.hora_llego ? `<div class="info-row">🟢 Llegó: ${r.hora_llego}</div>` : ''}
-            ${r.hora_se_fue ? `<div class="info-row">🔴 Se fue: ${r.hora_se_fue}</div>` : ''}
+            <strong>${escHtml(r.identificacion)}</strong>
+            ${r.zona ? `<div class="info-row">${escHtml(r.zona)}</div>` : ''}
+            ${r.hora_llego ? `<div class="info-row">Llegó: ${r.hora_llego}</div>` : ''}
+            ${r.hora_se_fue ? `<div class="info-row">Se fue: ${r.hora_se_fue}</div>` : ''}
             ${r.comentario ? `<div class="info-row" style="margin-top:4px;color:#666;font-style:italic">"${escHtml(r.comentario)}"</div>` : ''}
             <div class="info-row" style="font-size:.72rem;color:#999;margin-top:4px">${formatFecha(r.fecha_reporte)}</div>
           </div>`
@@ -220,13 +220,13 @@ async function cargarListaReportes() {
     container.innerHTML = reportes.map((r) => `
       <div class="reporte-card">
         <div class="rc-header">
-          <div class="rc-id">👤 ${escHtml(r.identificacion)}</div>
+          <div class="rc-id">${escHtml(r.identificacion)}</div>
           <div class="rc-fecha">${formatFecha(r.fecha_reporte)}</div>
         </div>
-        ${r.zona ? `<div class="rc-info"><span class="rc-badge">📍 ${escHtml(r.zona)}</span></div>` : ''}
+        ${r.zona ? `<div class="rc-info"><span class="rc-badge">${escHtml(r.zona)}</span></div>` : ''}
         <div class="rc-info">
-          ${r.hora_llego ? `<span class="rc-badge llegada">🟢 Llegó: ${r.hora_llego}</span>` : ''}
-          ${r.hora_se_fue ? `<span class="rc-badge sefu">🔴 Se fue: ${r.hora_se_fue}</span>` : ''}
+          ${r.hora_llego ? `<span class="rc-badge llegada">Llegó: ${r.hora_llego}</span>` : ''}
+          ${r.hora_se_fue ? `<span class="rc-badge sefu">Se fue: ${r.hora_se_fue}</span>` : ''}
         </div>
         ${r.comentario ? `<div class="rc-comentario">"${escHtml(r.comentario)}"</div>` : ''}
       </div>
@@ -244,10 +244,9 @@ async function cargarStats() {
     document.getElementById('statTotal').textContent = s.total;
     if (s.zonas.length) {
       const statZona = document.getElementById('statZona');
-      statZona.textContent = `🏘️ Zona con más reportes: ${s.zonas[0].zona} (${s.zonas[0].cantidad})`;
+      statZona.textContent = `${s.zonas[0].zona} (${s.zonas[0].cantidad})`;
     }
   } catch {
-    // Sin acción visible: la UI ya tolera ausencia de stats.
   }
 }
 
@@ -269,7 +268,7 @@ function escHtml(s) {
 function formatFecha(iso) {
   const d = new Date(iso);
   return d.toLocaleDateString('es-CR', { day: '2-digit', month: 'short' }) + ' ' +
-         d.toLocaleTimeString('es-CR', { hour: '2-digit', minute: '2-digit' });
+    d.toLocaleTimeString('es-CR', { hour: '2-digit', minute: '2-digit' });
 }
 
 function showToast(msg, error = false) {

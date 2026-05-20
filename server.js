@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const { MongoClient } = require('mongodb');
 
 const ENV_FILE = path.join(__dirname, '.env');
 
@@ -24,12 +25,14 @@ if (fs.existsSync(ENV_FILE)) {
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const DB_FILE = path.join(__dirname, 'db', 'reportes.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const MAX_REPORTES_PUBLICOS = 200;
 const RATE_WINDOW_MS = 15 * 60 * 1000;
 const RATE_MAX_REQUESTS = 25;
 const BODY_LIMIT = '10kb';
+const MONGODB_URI = process.env.MONGODB_URI || '';
+const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME || 'agua_aserri';
+const MONGODB_COLLECTION = process.env.MONGODB_COLLECTION || 'reportes';
 const rateBuckets = new Map();
 const ALLOWED_ZONAS = new Set([
   'Centro de Aserrí',
@@ -42,21 +45,21 @@ const ALLOWED_ZONAS = new Set([
   'Otro'
 ]);
 
-// Asegurar que existe el directorio y archivo
-if (!fs.existsSync(path.join(__dirname, 'db'))) fs.mkdirSync(path.join(__dirname, 'db'));
-if (!fs.existsSync(DB_FILE)) fs.writeFileSync(DB_FILE, JSON.stringify({ reportes: [] }));
+let mongoClient;
+let reportesCollection;
 
-// Helpers DB (JSON simple)
-function leerDB() {
-  const raw = fs.readFileSync(DB_FILE, 'utf8');
-  const parsed = JSON.parse(raw);
-  if (!parsed || !Array.isArray(parsed.reportes)) {
-    return { reportes: [] };
+async function connectToDatabase() {
+  if (!MONGODB_URI) {
+    throw new Error('Falta configurar MONGODB_URI en el entorno.');
   }
-  return parsed;
-}
-function guardarDB(data) {
-  fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+
+  mongoClient = new MongoClient(MONGODB_URI);
+  await mongoClient.connect();
+  const db = mongoClient.db(MONGODB_DB_NAME);
+  reportesCollection = db.collection(MONGODB_COLLECTION);
+
+  await reportesCollection.createIndex({ fecha_reporte: -1 });
+  await reportesCollection.createIndex({ zona: 1 });
 }
 
 function getClientIp(req) {
@@ -209,57 +212,67 @@ app.use(cors({ origin: false }));
 app.use(express.json({ limit: BODY_LIMIT, strict: true }));
 app.use(express.static(PUBLIC_DIR));
 
-// ── POST /api/reportes ────────────────────────
-app.post('/api/reportes', rateLimit, (req, res) => {
-  const parsed = sanitizeReporteInput(req.body || {});
-  if (parsed.error) {
-    return res.status(400).json({ error: parsed.error });
+app.post('/api/reportes', rateLimit, async (req, res, next) => {
+  try {
+    const parsed = sanitizeReporteInput(req.body || {});
+    if (parsed.error) {
+      return res.status(400).json({ error: parsed.error });
+    }
+
+    const nuevo = {
+      id: Date.now(),
+      ...parsed.value,
+      fecha_reporte: new Date().toISOString()
+    };
+
+    await reportesCollection.insertOne(nuevo);
+    return res.status(201).json({ id: nuevo.id, mensaje: 'Reporte guardado correctamente' });
+  } catch (error) {
+    return next(error);
   }
-
-  const db = leerDB();
-  const nuevo = {
-    id: Date.now(),
-    ...parsed.value,
-    fecha_reporte: new Date().toISOString()
-  };
-  db.reportes.push(nuevo);
-  guardarDB(db);
-  res.status(201).json({ id: nuevo.id, mensaje: 'Reporte guardado correctamente' });
 });
 
-// ── GET /api/reportes (últimas 24h) ───────────
-app.get('/api/reportes', (req, res) => {
-  const db = leerDB();
-  const hace24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const recientes = db.reportes
-    .filter(r => r.fecha_reporte >= hace24h)
-    .sort((a, b) => b.fecha_reporte.localeCompare(a.fecha_reporte))
-    .slice(0, MAX_REPORTES_PUBLICOS)
-    .map(toPublicReporte);
-  res.json(recientes);
+app.get('/api/reportes', async (req, res, next) => {
+  try {
+    const hace24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const recientes = await reportesCollection
+      .find({ fecha_reporte: { $gte: hace24h } })
+      .sort({ fecha_reporte: -1 })
+      .limit(MAX_REPORTES_PUBLICOS)
+      .toArray();
+
+    return res.json(recientes.map(toPublicReporte));
+  } catch (error) {
+    return next(error);
+  }
 });
 
-// ── GET /api/reportes/todos ───────────────────
 app.get('/api/reportes/todos', (req, res) => {
   res.status(403).json({ error: 'Ruta deshabilitada por seguridad.' });
 });
 
-// ── GET /api/stats ────────────────────────────
-app.get('/api/stats', (req, res) => {
-  const db = leerDB();
-  const hoyStr = new Date().toISOString().slice(0, 10);
-  const hoy = db.reportes.filter(r => r.fecha_reporte.startsWith(hoyStr)).length;
+app.get('/api/stats', async (req, res, next) => {
+  try {
+    const hoyStr = new Date().toISOString().slice(0, 10);
 
-  // Contar por zona
-  const zonasMap = {};
-  db.reportes.forEach(r => {
-    if (r.zona) zonasMap[r.zona] = (zonasMap[r.zona] || 0) + 1;
-  });
-  const zonas = Object.entries(zonasMap)
-    .map(([zona, cantidad]) => ({ zona, cantidad }))
-    .sort((a, b) => b.cantidad - a.cantidad);
+    const [total, hoy, zonas] = await Promise.all([
+      reportesCollection.countDocuments(),
+      reportesCollection.countDocuments({ fecha_reporte: { $regex: `^${hoyStr}` } }),
+      reportesCollection.aggregate([
+        { $match: { zona: { $nin: [null, ''] } } },
+        { $group: { _id: '$zona', cantidad: { $sum: 1 } } },
+        { $sort: { cantidad: -1 } }
+      ]).toArray()
+    ]);
 
-  res.json({ total: db.reportes.length, hoy, zonas });
+    return res.json({
+      total,
+      hoy,
+      zonas: zonas.map((item) => ({ zona: item._id, cantidad: item.cantidad }))
+    });
+  } catch (error) {
+    return next(error);
+  }
 });
 
 app.get('/config.js', (req, res) => {
@@ -279,10 +292,18 @@ app.use((err, req, res, next) => {
     return res.status(413).json({ error: 'La solicitud excede el tamaño permitido.' });
   }
 
-  return next(err);
+  console.error('Error no controlado:', err);
+  return res.status(500).json({ error: 'Error interno del servidor.' });
 });
 
-app.listen(PORT, () => {
-  console.log(`✅ Servidor corriendo en http://localhost:${PORT}`);
-  console.log(`📂 Base de datos: ${DB_FILE}`);
-});
+connectToDatabase()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`Servidor corriendo en http://localhost:${PORT}`);
+      console.log(`MongoDB Atlas conectado: ${MONGODB_DB_NAME}.${MONGODB_COLLECTION}`);
+    });
+  })
+  .catch((error) => {
+    console.error('No se pudo iniciar el servidor:', error.message);
+    process.exit(1);
+  });

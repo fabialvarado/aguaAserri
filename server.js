@@ -36,12 +36,12 @@ const MONGODB_COLLECTION = process.env.MONGODB_COLLECTION || 'reportes';
 const rateBuckets = new Map();
 const ALLOWED_ZONAS = new Set([
   'Centro de Aserrí',
-  'Salitral',
-  'Vuelta de Jorco',
-  'San Gabriel',
-  'Legua',
-  'Monterrey',
-  'Patarra',
+  'Salitrillos',
+  'Corazón de Jesús',
+  'María Auxiliadora',
+  'Las Tres Marías',
+  'Cinco Esquinas',
+  'Barrio La Planta',
   'Otro'
 ]);
 
